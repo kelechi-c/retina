@@ -1,0 +1,7 @@
+# only the code others need; everything else stays local
+*
+!.gitignore
+!README.md
+!requirements.txt
+!src/
+!src/*.py
