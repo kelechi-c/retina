@@ -5,3 +5,5 @@ __pycache__/
 *_out/
 mar_toy/
 decoded.png
+tools/
+docs/

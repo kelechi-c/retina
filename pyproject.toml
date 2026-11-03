@@ -23,8 +23,6 @@ dependencies = [
 [project.optional-dependencies]
 # Tokenizer(judges=...) and the old screens only
 judges = ["dreamsim"]
-# running the GPU steps on Modal
-modal = ["modal"]
 
 [build-system]
 requires = ["hatchling"]
