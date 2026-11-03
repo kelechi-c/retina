@@ -1,7 +1,7 @@
-# only the code others need; everything else stays local
-*
-!.gitignore
-!README.md
-!requirements.txt
-!src/
-!src/*.py
+archive/
+.venv/
+__pycache__/
+*.pyc
+*_out/
+mar_toy/
+decoded.png
