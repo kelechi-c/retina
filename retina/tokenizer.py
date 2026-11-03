@@ -25,6 +25,8 @@ REFIT = [3.149, 3.091, 2.111, 0.792, 0.836, -1.624]
 PIVOT = 5.876
 # Held out, the S1 decoder beats the plain one at or below this budget and loses above it.
 LEARNED_MAX = 600
+# The side the budget's inputs are measured at: the filter window is fixed in pixels and tiles are fixed at 256 px, so at other sides both signals drift.
+BUDGET_SIDE = 768
 WARP_MAX = 200
 # The user adopted this over the original DReX, 2026-11-01: on real documents it reads close to the full grid where the original does not.
 DREXT = "tensorkelechi/DReX-text-tuned"
@@ -78,7 +80,7 @@ VAES = dict(flux=Flux, flux2=Flux2VAE, qwen=QwenVAE, taeqi=TAEQI)
 
 class Tokenizer:
     def __init__(self, vae="flux2", dev="cuda", judges=None, learned=S1_FLUX2, scale=1., refit=True, gap=1.25, floor=22., grow=1.4, s1_min=0., drext=DREXT, tile=1, warp_max=WARP_MAX, tile_res=(224, 512), learned_max=LEARNED_MAX):
-        """learned: S1 decoder weights for this VAE, a file, or the published name for FLUX.2; None decodes plain. Used at or below LEARNED_MAX tokens. scale multiplies the budget of those images, so it does nothing without S1. gap only acts on the refit curve (refit=True). drext: tuned DReX weights, a file or a Hugging Face repo; None keeps the original. tile k: DReX can rise to the kth highest of the tile scores (9 at 768), so one dense region counts; 0 is whole-image only. warp_max: warp below this many tokens."""
+        """learned: S1 decoder weights for this VAE, a file, or the published name for FLUX.2; None decodes plain. Used at or below LEARNED_MAX tokens. scale multiplies the budget of those images, so it does nothing without S1. gap only acts on the refit curve (refit=True). drext: tuned DReX weights, a file or a Hugging Face repo; None keeps the original. tile k: DReX can rise to the kth highest of the 9 tile scores, so one dense region counts; 0 is whole-image only. warp_max: warp below this many tokens."""
         self.dev, self.v, self.J = dev, VAES[vae](dev), judges
         self.c = CURVE
         self.drex = load_drex(dev)
@@ -106,7 +108,10 @@ class Tokenizer:
 
     @torch.no_grad()
     def budget(self, x):
+        """-> (budget in tokens, DReX, texture energy). Both signals are read from a 768 px copy, the size the curve was fit at, so a picture gets the same inputs at any size. The budget is not yet scaled for size: tools/fit_size_scaling.py measures that."""
         x = self._check(x)
+        if x.shape[-1] != BUDGET_SIDE:
+            x = C.down(x, BUDGET_SIDE).clamp(-1, 1)
         S = x.shape[-1]
         tiles = torch.cat([x[..., i : i + T, j : j + T] for i in range(0, S, T) for j in range(0, S, T)])
         tex = (tiles - X.structure(tiles)).abs().mean().item()
