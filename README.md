@@ -122,7 +122,7 @@ uv run python -m mar.train mar_toy/train mar_toy/enc/tokens.pt --steps 300 --bud
 uv run python -m mar.sample mar_toy/samples --ckpt mar_toy/train/mar.pt --per 1 --live
 ```
 
-The released model used `mar.encode` with its default caps (12,000 images, 52 minutes on an A100), 30,000 steps of `mar.train` with `--budget 12000`, then another 34,795 images added with `--load` and `--more`, trained `--until 100000`: 9.8 steps a second on an A100, about 3 hours in all. The curated part of that data sits on a private repo; without `--manifest` the encoder skips it.
+The released model used `mar.encode` with its default caps (12,000 images, 52 minutes on an A100), 30,000 steps of `mar.train` with `--budget 12000`, then another 34,795 images added with `--load` and `--more`, trained `--until 100000`: 9.8 steps a second on an A100, about 2.8 hours of training. The curated part of that data sits on a private repo; without `--manifest` the encoder skips it.
 
 ## Tests
 
@@ -133,6 +133,16 @@ bash tests/test_mar.sh
 ```
 
 The first checks the defaults, an exact pack round trip, that the Mondrians cost under an eighth of the busy paintings, and one MAR sample per label. The second runs each main option on a simple and a busy image. The third is the toy MAR run above plus sampling from the released weights.
+
+## Compute
+
+| | Compute |
+|---|---|
+| Tokenizer: budget fit, DReX text tune, S1 refiner | about 7 Colab units on an L4 and $1 of Modal A10G |
+| Released MAR: encoding and 100,000 steps | about 30 Colab units (4.4 A100 hours) and $3.50 of Modal A10G |
+| All search since the elastic grid, those included | about 45 Colab units and $23 of Modal |
+
+The breakdown, and the earlier stages, are in [docs/ARTICLE.md](docs/ARTICLE.md#compute).
 
 ## Running on Modal
 
