@@ -29,7 +29,7 @@ SETTINGS = {
 @click.option("--vaes", default="flux2", show_default=True, help="comma list of flux2, flux, qwen, taeqi")
 def main(vaes):
     dev, fails = "cuda", []
-    imgs = {k: load_img(str(next((ROOT / "examples").glob(f"*/{k}.jpg"))), 768).to(dev) for k in ("mondrian_b144", "veronese")}
+    imgs = {k: load_img(str(next((ROOT / "assets" / "examples").glob(f"*/{k}.jpg"))), 768).to(dev) for k in ("mondrian_b144", "veronese")}
     n = {}
     for vae in vaes.split(","):
         for name, kw in SETTINGS.items() if vae == "flux2" else {"default": {}}.items():
