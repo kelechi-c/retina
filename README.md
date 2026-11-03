@@ -74,7 +74,7 @@ Weights download on first use: the FLUX.2-dev VAE from Black Forest Labs, DReX f
 from retina import Tokenizer, load_img, save_png
 
 tok = Tokenizer()                          # the defaults above
-x = load_img("examples/simple/mondrian_piet.jpg", 768).cuda()
+x = load_img("assets/examples/simple/mondrian_piet.jpg", 768).cuda()
 t = tok.encode(x)
 seq = Tokenizer.pack(t)["seq"]             # [N, 128]; N = 39 here, 2,304 for the plain grid
 save_png(tok.decode(t), "decoded.png")
@@ -83,7 +83,7 @@ save_png(tok.decode(t), "decoded.png")
 The same as a script:
 
 ```bash
-uv run python examples/quickstart.py examples/simple/mondrian_piet.jpg decoded.png
+uv run python assets/examples/quickstart.py assets/examples/simple/mondrian_piet.jpg decoded.png
 ```
 
 The main options of `Tokenizer(...)`: `learned=None` turns off the refiner, `drext=None` uses the original DReX, `gap` widens (above 1) or narrows the spread between simple and busy images, `floor` sets the PSNR floor (0 turns it off), `tile=0` scores the whole image only, `warp_max=0` turns off the warp, and `vae` picks `flux2` (default), `flux` or `qwen`. Images are centre-cropped to a square; 768 is the size everything was fit and measured at, and other multiples of 256 work.
@@ -93,7 +93,7 @@ The main options of `Tokenizer(...)`: `learned=None` turns off the refiner, `dre
 Tokens per image and closeness to the full grid, for a folder of images grouped by subfolder:
 
 ```bash
-uv run python eval/evaluate.py examples eval_out
+uv run python tests/evaluate.py assets/examples eval_out
 ```
 
 It prints the median and p90 tokens per group and DINOv3, LPIPS and PSNR against the grid decode, and writes `eval_out/eval.json`. `--no-metrics` skips the comparison, `--save` keeps both decodes.
@@ -142,26 +142,11 @@ The first checks the defaults, an exact pack round trip, that the Mondrians cost
 | Released MAR: encoding and 100,000 steps | about 30 Colab units (4.4 A100 hours) and $3.50 of Modal A10G |
 | All search since the elastic grid, those included | about 45 Colab units and $23 of Modal |
 
-The breakdown, and the earlier stages, are in [docs/ARTICLE.md](docs/ARTICLE.md#compute).
-
-## Running on Modal
-
-```bash
-uv sync --extra modal
-uv run modal run tools/modal_run.py --cmd "python tests/test_end_to_end.py OUT" --run test --gpu L4
-uv run modal volume get retina-runs test ./test_out
-```
-
-Any repo command works in `--cmd`; `OUT` becomes the run's folder on the `retina-runs` volume. It needs a Modal secret named `huggingface` holding `HF_TOKEN`.
-
 ## Layout
 
 ```
 retina/      the tokenizer package: tokenizer.py, warp.py, drex.py, refiner.py, vae.py
 mar/         the MAR model, data, encoding, training and sampling
-eval/        evaluate.py
-examples/    quickstart.py and four public-domain paintings
-tests/       end to end, options, MAR
-tools/       modal_run.py
-docs/        ARTICLE.md, the write-up
+tests/       end to end, options, MAR, evaluate.py, readme_check.py
+assets/      figures, and examples/: quickstart.py and four public-domain paintings
 ```
