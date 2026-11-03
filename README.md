@@ -148,6 +148,6 @@ The first needs no GPU and no weights: it checks that packing round-trips and ma
 ```
 retina/      the tokenizer package: tokenizer.py, warp.py, drex.py, refiner.py, vae.py
 mar/         the MAR model, data, encoding, training and sampling
-tests/       end to end, options, MAR, evaluate.py, readme_check.py
+tests/       CPU checks, end to end, options, MAR, evaluate.py, readme_check.py
 assets/      figures, and examples/: quickstart.py and four public-domain paintings
 ```
