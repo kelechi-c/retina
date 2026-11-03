@@ -1,6 +1,6 @@
 """Tokenize one image, print what it costs, decode it, and check the packed sequence round-trips.
 
-usage: uv run python examples/quickstart.py IMAGE [OUT.png] [--side 768]
+usage: uv run python assets/examples/quickstart.py IMAGE [OUT.png] [--side 768]
 """
 import click
 import torch

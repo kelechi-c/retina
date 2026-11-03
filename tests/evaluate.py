@@ -1,6 +1,6 @@
 """Tokens per image, and how close each decode is to the plain FLUX.2 grid decode, over a folder of images grouped by subfolder.
 
-usage: uv run python eval/evaluate.py ROOT OUT [--side 768] [--no-metrics] [--save]
+usage: uv run python tests/evaluate.py ROOT OUT [--side 768] [--no-metrics] [--save]
 
 ROOT/<group>/*.jpg|png. Writes OUT/eval.json (per image) and prints per group: median and p90 tokens, then DINOv3 patch and global cosine, LPIPS and PSNR against the grid decode. p90 is the worse tail: the 90th percentile of tokens and LPIPS, the 10th of similarity and PSNR. Images at the full grid decode identically, and their PSNR is reported as 120.
 """
