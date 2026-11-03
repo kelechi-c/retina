@@ -42,7 +42,9 @@ def main(**kw):
     a = SimpleNamespace(**kw)
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    dev = "cuda"
+    dev = "cuda" if torch.cuda.is_available() else "cpu"  # CPU only for smoke tests
+    if a.until and not a.load:
+        raise click.UsageError("--until continues a checkpoint; pass --load too, or use --steps")
     random.seed(0)
     torch.manual_seed(0)
 
@@ -60,15 +62,22 @@ def main(**kw):
     print("dropped for unseen layouts", n_all - len(R), flush=True)
     train, held = [r for r in R if r["id"] not in ho], [r for r in R if r["id"] in ho]
     print("train", len(train), "held", len(held), "layouts", len(LAYOUTS), flush=True)
+    if not train:
+        raise click.UsageError(f"all {len(ids)} images went to the held-out set; encode more images")
     for r in R:
         r["slot"], r["seq"] = slots(r["layout"]), r["seq"].float()
     mu, sd = torch.zeros(4, W), torch.ones(4, W)
+    # a random sample: the tokens file runs source by source, so its first rows are procedural flats and textures only
+    sample = random.Random(0).sample(train, min(4000, len(train)))
     for s in range(4):
-        v = torch.cat([r["seq"][r["slot"] == s] for r in train[:4000]])
+        v = torch.cat([r["seq"][r["slot"] == s] for r in sample])
         if len(v) >= 8:
             mu[s], sd[s] = v.mean(0), v.std(0).clamp_min(1e-3)
     mu, sd = (ck["mu"].to(dev), ck["sd"].to(dev)) if ck else (mu.to(dev), sd.to(dev))
     BY = [[r for r in train if r["label"] == l] for l in range(4)]
+    PRESENT = [l for l in range(4) if BY[l]]
+    if len(PRESENT) < 4:
+        print("no training images for labels", [NAMES[l] for l in range(4) if not BY[l]], flush=True)
     SIDE = R[0]["layout"]["side"]
 
     model = build(vars(a), len(LAYOUTS)).to(dev)
@@ -79,6 +88,8 @@ def main(**kw):
     if ck:
         start = ck["step"]
         if a.until:
+            if a.until <= start:
+                raise click.UsageError(f"--until {a.until} is not past the checkpoint's step {start}")
             a.steps = a.until - start
         model.load_state_dict(ck["model"])
         ema = {k: v.to(dev) for k, v in ck["ema"].items()}
@@ -103,7 +114,7 @@ def main(**kw):
 
     def batch():
         """Equal mix of labels; about a.budget tokens per batch, sequences of similar length together."""
-        pool = sorted((random.choice(BY[random.randrange(4)]) for _ in range(256)), key=lambda r: len(r["seq"]))
+        pool = sorted((random.choice(BY[random.choice(PRESENT)]) for _ in range(256)), key=lambda r: len(r["seq"]))
         i = random.randrange(len(pool))
         B, n = [], 0
         for r in pool[i:] + pool[:i]:
@@ -134,7 +145,10 @@ def main(**kw):
 
     @torch.no_grad()
     def held_loss(data, n=64, wrong=False):
-        """Fixed noise and masks. wrong gives each sequence another label: if that costs nothing, the label does not reach the content."""
+        """Fixed noise and masks. wrong gives each sequence another label: if that costs nothing, the label does not reach the content.
+        The random state and the model's mode are put back afterwards, so evaluating does not change the training run."""
+        was, py = model.training, random.getstate()
+        cpu, gpu = torch.get_rng_state(), (torch.cuda.get_rng_state_all() if dev == "cuda" else None)
         model.eval()
         random.seed(1)
         torch.manual_seed(1)
@@ -142,8 +156,11 @@ def main(**kw):
         for r in random.sample(data, min(n, len(data))):
             q = r if not wrong else {**r, "label": (r["label"] + 2) % 4}
             out_.append(loss_of([q], drop=False)[0].item())
-        random.seed()
-        model.train()
+        random.setstate(py)
+        torch.set_rng_state(cpu)
+        if gpu is not None:
+            torch.cuda.set_rng_state_all(gpu)
+        model.train(was)
         return sum(out_) / len(out_)
 
 
@@ -153,7 +170,8 @@ def main(**kw):
 
     opt = torch.optim.AdamW(model.parameters(), a.lr, betas=(.9, .95), weight_decay=.02)
     t0, avg, seen_tok = time.time(), None, 0
-    torch.cuda.reset_peak_memory_stats()
+    if dev == "cuda":
+        torch.cuda.reset_peak_memory_stats()
     step = start
     for step in range(start + 1, start + a.steps + 1):
         for g in opt.param_groups:
@@ -171,7 +189,7 @@ def main(**kw):
         avg = l.item() if avg is None else .98 * avg + .02 * l.item()
         if step % 100 == 0:
             dt = time.time() - t0
-            print(f"step {step} flow {avg:.4f} layout {ll.item():.3f} {(step - start) / dt:.2f} it/s tokens/s {seen_tok / dt:.0f} mem {torch.cuda.max_memory_allocated() / 2**30:.1f}G", flush=True)
+            print(f"step {step} flow {avg:.4f} layout {ll.item():.3f} {(step - start) / dt:.2f} it/s tokens/s {seen_tok / dt:.0f} mem {torch.cuda.max_memory_allocated() / 2**30 if dev == 'cuda' else 0:.1f}G", flush=True)
         if step % a.every == 0:
             save(step)
             print(f"step {step} held {held_loss(held):.4f} wrong_label {held_loss(held, wrong=True):.4f} train {held_loss(train):.4f}", flush=True)

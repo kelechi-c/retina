@@ -21,10 +21,11 @@ REPO, FILE = "tensorkelechi/retina-tokenizer", "mar_v2.pt"
 
 
 def slots(L):
-    """Normalization slot of each token: 0 knots, 1 and 2 statistics, 3 latents."""
-    # statistics are 27 floats per 256 px tile: 2 tokens at 768, 1 at 512
-    s = [0] * (1 if L["warped"] else 0) + [1, 2][: -(-27 * (L["side"] // 256) ** 2 // W)] * (1 if L["stats"] else 0)
-    return torch.tensor(s + [3] * (L["n"] // 2) ** 2)
+    """Normalization slot of each token: 0 knots, 1 and 2 statistics, 3 latents. Token counts follow Tokenizer.pack: 126 knot floats, 27 statistics floats per 256 px tile."""
+    k = -(-126 // W) if L["warped"] else 0
+    # statistics: 1 token at 512, 2 at 768, 4 at 1024; the first gets slot 1, the rest slot 2
+    s = -(-27 * (L["side"] // 256) ** 2 // W) if L["stats"] else 0
+    return torch.tensor([0] * k + ([1] + [2] * (s - 1))[:s] + [3] * (L["n"] // 2) ** 2)
 
 
 def coords(L, slot):

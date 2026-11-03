@@ -7,7 +7,7 @@ import safetensors.torch as stt
 import torch
 import torch.nn.functional as F
 from huggingface_hub import hf_hub_download
-from PIL import Image
+from PIL import Image, ImageOps
 
 from .taesd import TAESD
 
@@ -55,7 +55,7 @@ def save_png(x, path):
 
 
 def load_img(path, side):
-    im = Image.open(path).convert("RGB")
+    im = ImageOps.exif_transpose(Image.open(path)).convert("RGB")  # phone photos store their rotation in EXIF
     s = min(im.size)
     l, u = (im.width - s) // 2, (im.height - s) // 2
     a = np.asarray(im.crop((l, u, l + s, u + s)).resize((side, side), Image.LANCZOS)).copy()
