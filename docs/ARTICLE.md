@@ -175,7 +175,7 @@ This comparison predates FLUX.2, which is now the default and beats FLUX.1 at eq
 
 **The released MAR.** A 57.1M model at 512 px, conditioned on four content labels (simple, moderate, textured, dense) that were assigned from source, style and genre before anything was tokenized: procedural flats, Minimalism and Color Field for simple; abstract and cubist painting for moderate; DTD textures, Impressionism and landscapes for textured; Baroque, Northern Renaissance, Mannerism and Romanticism for dense. The label is added to every token and to the flow head's condition, so it cannot be lost among hundreds of tokens. Other changes from the first MAR: a 1024-wide head, an EMA of the weights (.9999), warmup then a constant rate, temperature .95 at sampling, 10% label dropout. It writes a layout first, which fixes the token count, then knots and statistics, then latents in random order over 64 steps, each token drawn with 32 flow steps.
 
-Data: 12,000 images encoded with their flips for the first 30,000 steps on one A100, then 34,795 more for steps 44,000 to 100,000, 92,789 sequences in all against 800 held out. 9.8 steps a second at 12,000 tokens a batch, about 3 hours and 25 Colab units in all.
+Data: 12,000 images encoded with their flips for the first 30,000 steps on one A100, then 34,795 more for steps 44,000 to 100,000, 92,789 sequences in all against 800 held out. 9.8 steps a second at 12,000 tokens a batch: about 2.8 hours of training, and about 30 Colab units in all with encoding and a lost VM (see Compute).
 
 | Bar, frozen before training | EMA weights at 100k |
 |---|---|
@@ -288,7 +288,35 @@ These are worth reporting, because they shaped the design.
 - **Frozen rules.** Pass bars were written down before runs, and every amendment made after seeing a result is labelled as such.
 - **Overfit first.** Every trained part had to overfit before it could train for real. That saved the full run on several parts.
 - **Judges as screens.** DreamSim and DINOv3 are in no shipped model's loss, only in the one test of what encoder tuning could gain. Viewing has the final say.
-- **Budget.** About $23 of Modal and about 44 Colab compute units over the project, 25 of them for the released MAR.
+
+## Compute
+
+Read from the project ledger, Colab balances and Modal billing. Colab units (CU) are Colab's compute units: an L4 burns about 1.9 an hour, an A100 about 6.7. Modal is in dollars on an A10G at about $1.10 an hour. Lost VMs and failed launches are counted where they happened.
+
+**What the shipped parts cost to make.** Only three parts of `Tokenizer()` are trained or fitted; the warp, the floor and the packing have no weights.
+
+| Part | What ran | Compute |
+|---|---|---|
+| Budget curve, 6 weights | least-squares fit on cached DReX and texture scores | seconds on a CPU |
+| DReX text tune | OCR labels for 275 pages, then fusion and head on cached features | about $1.10 of Modal A10G, labelling included |
+| S1 refiner on FLUX.2 | overfit gate, 10,000 steps on 6,000 images, evaluation | about 7 CU of Colab L4 (about 3.6 hours), two lost VMs included |
+| **Tokenizer, total** | | **about 7 CU and $1** |
+
+**What the MAR cost.**
+
+| Run | What ran | Compute |
+|---|---|---|
+| Overfit AR, first CLIP MAR, its diagnosis (dropped) | curated encoding 43 min, CLIP 6 min, MAR 41 min, diagnosis runs | about $4 of Modal A10G |
+| MAR v2 pilot | 450 images, 1,300 steps, timing only | 1.7 CU of Colab A100 |
+| **MAR v2, released** | encode 12,000 images (52 min) and train to 30,000 steps | 13.5 CU of Colab A100 |
+| | extend to 44,000, VM lost once | 4.3 CU of Colab A100 |
+| | encode 34,795 more images | about $3.50 of Modal A10G (3.1 hours) |
+| | train 44,000 to 100,000 | 11.9 CU of Colab A100 |
+| | **released MAR, total** | **about 30 CU (about 4.4 A100 hours) and $3.50** |
+
+**Everything else was search.** The work that found the final design (stages 28-52: the elastic grid, the warp, the floor, every failed learned part, the FLUX.2 comparison, the encoder-tuning bound) cost about $13 of Modal A10G and about 6 CU of Colab beyond the rows above. The README checks on a Colab L4 and a Modal A10G cost about .5 CU and under $1. Before that, stages 1-27 (Oct 27-31: learned 1D tokenizers, foveated canvases, quadtrees, latent transform coding) ran mostly on Colab A100s; the notes put them at very roughly 140 CU plus part of an October Modal bill shared with other projects, an estimate from session notes rather than billing.
+
+So of about $23 of Modal and 45 CU of Colab spent since the elastic grid, the shipped tokenizer took about 7 CU and $1 to make, and the released MAR about 30 CU and $3.50.
 
 ## Pointers
 
