@@ -78,7 +78,7 @@ VAES = dict(flux=Flux, flux2=Flux2VAE, qwen=QwenVAE, taeqi=TAEQI)
 
 class Tokenizer:
     def __init__(self, vae="flux2", dev="cuda", judges=None, learned=S1_FLUX2, scale=1., refit=True, gap=1.25, floor=22., grow=1.4, s1_min=0., drext=DREXT, tile=1, warp_max=WARP_MAX, tile_res=(224, 512), learned_max=LEARNED_MAX):
-        """learned: S1 decoder weights for this VAE, a file, or the published name for FLUX.2; None decodes plain. Used at or below LEARNED_MAX tokens. scale multiplies the budget of those images. drext: tuned DReX weights, a file or a Hugging Face repo; None keeps the original. tile k: DReX can rise to the kth highest of the 9 tile scores, so one dense region counts; 0 is whole-image only. warp_max: warp below this many tokens."""
+        """learned: S1 decoder weights for this VAE, a file, or the published name for FLUX.2; None decodes plain. Used at or below LEARNED_MAX tokens. scale multiplies the budget of those images, so it does nothing without S1. gap only acts on the refit curve (refit=True). drext: tuned DReX weights, a file or a Hugging Face repo; None keeps the original. tile k: DReX can rise to the kth highest of the tile scores (9 at 768), so one dense region counts; 0 is whole-image only. warp_max: warp below this many tokens."""
         self.dev, self.v, self.J = dev, VAES[vae](dev), judges
         self.c = CURVE
         self.drex = load_drex(dev)
@@ -96,14 +96,23 @@ class Tokenizer:
             self.net = R.StatRefiner().to(dev).eval().requires_grad_(False)
             self.net.load_state_dict(torch.load(learned if os.path.exists(learned) else hf_hub_download(WEIGHTS, learned), map_location=dev))
 
+    def _check(self, x):
+        """One square RGB image whose side is a multiple of 256: the budget, the statistics tokens and decode all cut it into 256 px tiles."""
+        if x.ndim != 4 or x.shape[0] != 1 or x.shape[1] != 3 or x.shape[-1] != x.shape[-2]:
+            raise ValueError(f"expected one square RGB image of shape [1, 3, S, S], got {tuple(x.shape)}")
+        if x.shape[-1] % T:
+            raise ValueError(f"the image side must be a multiple of {T}, got {x.shape[-1]}")
+        return x.to(self.dev)
+
     @torch.no_grad()
     def budget(self, x):
+        x = self._check(x)
         S = x.shape[-1]
         tiles = torch.cat([x[..., i : i + T, j : j + T] for i in range(0, S, T) for j in range(0, S, T)])
         tex = (tiles - X.structure(tiles)).abs().mean().item()
         d = drex_score(self.drex, x)[0]
         if self.tile:
-            d = max(d, sorted(drex_score(self.drex, tiles, *self.tile_res))[-self.tile])
+            d = max(d, sorted(drex_score(self.drex, tiles, *self.tile_res))[-min(self.tile, len(tiles))])
         if self.refit:
             t = 10 * tex
             b = sum(w * v for w, v in zip(REFIT, (1, d, t, d * d, t * t, d * t)))
@@ -128,11 +137,14 @@ class Tokenizer:
 
     @torch.no_grad()
     def encode(self, x, n=None):
-        """x [1,3,S,S] in [-1,1] -> token dict. With judges, warp or no warp is settled by one decode of each, never the budget."""
+        """x [1,3,S,S] in [-1,1], S a multiple of 256 -> token dict. n, if given, fixes the cells per side and skips the floor. With judges, warp or no warp is settled by one decode of each, never the budget."""
+        x = self._check(x)
         S = x.shape[-1]
+        given = n is not None
+        if given and (n % self.v.pack or not self.v.pack <= n <= S // self.v.cell):
+            raise ValueError(f"n must be a multiple of {self.v.pack} from {self.v.pack} to {S // self.v.cell} at side {S}, got {n}")
         b, d, tex = self.budget(x)
         use = self.net is not None and b <= self.learned_max
-        given = n is not None
         n = n or self.size_of(b * self.scale if use else b, S)
         if self.J is None:
             return self._encode_fast(x, n, b, d, tex, given)
@@ -168,7 +180,8 @@ class Tokenizer:
                 break
             n = min(max(int(n * self.grow / step + .5) * step, n + step), S // self.v.cell)
         t.update(budget=b, drex=d, tex=tex)
-        if self.net is not None and self.length(t) + 9 <= self.learned_max:
+        # one statistics token per 256 tile, counted as length() counts them
+        if self.net is not None and self.length(t) + (S // T) ** 2 <= self.learned_max:
             s = self._stats(x, c).float()
             if s[:, :24].mean().item() >= self.s1_min:
                 t["stats"] = s
@@ -198,10 +211,10 @@ class Tokenizer:
         if t["knots"] is None:
             st = torch.full((1, 2, S, S), math.log2(max(S / N, 1)) / 4, device=self.dev)
         else:
-            e = lambda v: torch.cat((torch.zeros(1, device=self.dev), v.to(self.dev) * S, torch.full((1,), float(S), device=self.dev)))
+            e = lambda v: torch.cat((torch.zeros(1, device=self.dev), v.to(self.dev).float() * S, torch.full((1,), float(S), device=self.dev)))
             st = (W.local_scale(e(t["knots"][0]), e(t["knots"][1]), N, N, S, S).clamp_min(1).log2() / 4).float()
         q = S // T
-        m = s.to(self.dev).T.reshape(1, 27, q, q).repeat_interleave(T, 2).repeat_interleave(T, 3)
+        m = s.to(self.dev).float().T.reshape(1, 27, q, q).repeat_interleave(T, 2).repeat_interleave(T, 3)
         noise = torch.randn((1, 1, S, S), generator=torch.Generator(self.dev).manual_seed(0), device=self.dev)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             return self.net(c, st, m, noise).float().clamp(-1, 1)
@@ -210,13 +223,13 @@ class Tokenizer:
     def _plain(self, t):
         S, n, p = t["side"], t["n"], self.v.pack
         g = n // p
-        z = t["lat"].T.reshape(1, -1, g, g).to(self.dev)
+        z = t["lat"].T.reshape(1, -1, g, g).to(self.dev).float()  # mar.encode stores sequences in half precision
         z = F.pixel_shuffle(z, p) if p > 1 else z
         N = self.v.cell * n
         y = self.v.dec(z).float()
         if t["knots"] is None:
             return (C.up(y, S) if N != S else y).clamp(-1, 1)
-        e = lambda v: torch.cat((torch.zeros(1, device=self.dev), v.to(self.dev) * S, torch.full((1,), float(S), device=self.dev)))
+        e = lambda v: torch.cat((torch.zeros(1, device=self.dev), v.to(self.dev).float() * S, torch.full((1,), float(S), device=self.dev)))
         return W.inverse(y, e(t["knots"][0]), e(t["knots"][1]), S, S).clamp(-1, 1)
 
     @staticmethod

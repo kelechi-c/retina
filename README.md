@@ -127,12 +127,13 @@ The released model used `mar.encode` with its default caps (12,000 images, 52 mi
 ## Tests
 
 ```bash
+uv run python tests/test_cpu.py
 uv run python tests/test_end_to_end.py
 uv run python tests/test_flags.py
 bash tests/test_mar.sh
 ```
 
-The first checks the defaults, an exact pack round trip, that the Mondrians cost under an eighth of the busy paintings, and one MAR sample per label. The second runs each main option on a simple and a busy image. The third is the toy MAR run above plus sampling from the released weights.
+The first needs no GPU and no weights: it checks that packing round-trips and matches the MAR's token layout at 256 to 1024 px, and that the warp is sane. The second checks the defaults, an exact pack round trip, that the Mondrians cost under an eighth of the busy paintings, and one MAR sample per label. The third runs each main option on a simple and a busy image. The fourth is the toy MAR run above plus sampling from the released weights.
 
 ## Compute
 

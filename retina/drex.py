@@ -12,6 +12,12 @@ import torchvision
 # downloaded once; HF_HOME if set, so it sits with the other weights
 CACHE = pathlib.Path(os.environ.get("HF_HOME", pathlib.Path.home() / ".cache" / "huggingface"))
 IM = (.485, .456, .406), (.229, .224, .225)
+URL = "https://media.githubusercontent.com/media/jskaza/DReX/main/DReX.pth"
+SHA = "4a7fb1b6c8f2efb845bdf3635ae25336ad875bb8434c32b52129e1b2e560ded2"
+
+
+def _sha(p):
+    return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
 class Fusion(nn.Module):
@@ -35,15 +41,24 @@ def load_drex(dev="cuda"):
 
     p = CACHE / "drex.pth"
     p.parent.mkdir(parents=True, exist_ok=True)
-    if not p.exists():
-        urllib.request.urlretrieve("https://media.githubusercontent.com/media/jskaza/DReX/main/DReX.pth", p)
-    assert hashlib.sha256(p.read_bytes()).hexdigest() == "4a7fb1b6c8f2efb845bdf3635ae25336ad875bb8434c32b52129e1b2e560ded2"
+    if not p.exists() or _sha(p) != SHA:
+        # into a side file first: an interrupted download must not leave a file that fails the checksum on every later run
+        part = p.with_name(p.name + ".part")
+        urllib.request.urlretrieve(URL, part)
+        if _sha(part) != SHA:
+            part.unlink()
+            raise RuntimeError(f"DReX download from {URL} does not match its checksum")
+        part.replace(p)
     sd = torch.load(p, map_location="cpu", weights_only=True)
     sd = sd.get("model_state", sd)
     dino = DINOv3ViTModel(DINOv3ViTConfig(hidden_size=384, intermediate_size=1536, num_attention_heads=6, num_hidden_layers=12, patch_size=16, num_register_tokens=4)).eval()
     print(dino.load_state_dict({k[11:].replace("layer.", "model.layer.", 1) if k.startswith("dino_model.layer.") else k[11:]: v for k, v in sd.items() if k.startswith("dino_model.")}, strict=True), flush=True)
     r = torchvision.models.resnet50(weights=None).eval()
-    print(r.load_state_dict({k[16:]: v for k, v in sd.items() if k.startswith("resnet_backbone.")}, strict=False), flush=True)
+    res = r.load_state_dict({k[16:]: v for k, v in sd.items() if k.startswith("resnet_backbone.")}, strict=False)
+    print(res, flush=True)
+    # DReX drops the classifier; any other missing key would leave part of the backbone random
+    if res.unexpected_keys or set(res.missing_keys) - {"fc.weight", "fc.bias"}:
+        raise RuntimeError(f"DReX ResNet weights do not match torchvision's resnet50: {res}")
     fu = Fusion(384, 256 + 512 + 1024 + 2048).eval()
     fu.load_state_dict({k[7:]: v for k, v in sd.items() if k.startswith("fusion.")})
     h = nn.Sequential(nn.Linear(384, 128), nn.GELU(), nn.Dropout(.1), nn.Linear(128, 64), nn.GELU(), nn.Dropout(.1), nn.Linear(64, 32), nn.GELU(), nn.Dropout(.1), nn.Linear(32, 1)).eval()

@@ -45,7 +45,8 @@ def main(**kw):
         caps = {k: v for k, v in caps.items() if k[1] != "curated"}
     span = lambda t: range(int(t.split("-")[0]), int(t.split("-")[-1]) + 1)
     order = lambda t: random.Random(0).sample(list(span(t)), len(span(t)))  # shards run in style order, and a time limit may cut the last
-    tok = Tokenizer("flux2", "cuda")
+    dev = "cuda" if torch.cuda.is_available() else "cpu"  # CPU only for smoke tests
+    tok = Tokenizer("flux2", dev)
     src = itertools.chain(
         ((f"proc-{i}", "procedural", 0, D.procedural(i, a.side)) for i in range(a.procedural_from, a.procedural_from + caps.get(("0", "procedural"), 0))),
         D.dtd(None) if caps.get(("2", "dtd")) else iter(()),
@@ -86,7 +87,7 @@ def main(**kw):
             shutil.copy(out / "tokens.pt", pathlib.Path(a.mirror) / "tokens.pt")
 
 
-    res, done, bad, t_enc, kept = [], collections.Counter(), 0, 0., collections.Counter()
+    res, done, bad, t_enc, kept, got = [], collections.Counter(), 0, 0., collections.Counter(), collections.Counter()
     t1 = time.time()
     with cf.ThreadPoolExecutor(a.workers) as pool:
         it, q = wanted(), collections.deque()
@@ -98,24 +99,32 @@ def main(**kw):
                 q.append(pool.submit(load, n))
             if not q or (a.max_s and time.time() - t1 > a.max_s):
                 break
+            job = q.popleft()
             try:
-                key, source, label, x = q.popleft().result()
-                x = x.to("cuda")
+                key, source, label, x = job.result()
+                x = x.to(dev)
                 t2 = time.time()
+                pair = []
                 for flip in (0, 1):
                     p = Tokenizer.pack(tok.encode(x.flip(-1) if flip else x))
-                    res.append(dict(id=key, source=source, label=label, flip=flip, seq=p["seq"].half().cpu(), layout=p["layout"]))
+                    pair.append(dict(id=key, source=source, label=label, flip=flip, seq=p["seq"].half().cpu(), layout=p["layout"]))
                 t_enc += time.time() - t2
-                done[label] += 1
-                k = label, source
-                if kept[k] < 3:
-                    kept[k] += 1
-                    d = tok.decode(Tokenizer.unpack(dict(seq=res[-2]["seq"].float().cuda(), layout=res[-2]["layout"])))
-                    C.save_png(x, out / f"check_{label}_{source}_{kept[k]}_orig.png")
-                    C.save_png(d, out / f"check_{label}_{source}_{kept[k]}_{len(res[-2]['seq'])}.png")
             except Exception as e:
-                bad += 1
+                bad += 1  # nothing of this image is kept, so its two sequences stay a pair
                 print("bad", repr(e)[:160], flush=True)
+                continue
+            res += pair
+            done[label] += 1
+            got[f"{label}/{source}"] += 1
+            k = label, source
+            if kept[k] < 3:
+                kept[k] += 1
+                try:
+                    d = tok.decode(Tokenizer.unpack(dict(seq=pair[0]["seq"].float().to(dev), layout=pair[0]["layout"])))
+                    C.save_png(x, out / f"check_{label}_{source}_{kept[k]}_orig.png")
+                    C.save_png(d, out / f"check_{label}_{source}_{kept[k]}_{len(pair[0]['seq'])}.png")
+                except Exception as e:
+                    print("check image failed", repr(e)[:160], flush=True)
             m = sum(done.values())
             if m % 500 == 0:
                 print(m, dict(done), f"wall s/img {(time.time() - t1) / m:.3f} encode s/img {t_enc / m:.3f}", flush=True)
@@ -130,7 +139,7 @@ def main(**kw):
 
 
     images = sum(done.values())
-    report = dict(images=images, bad=bad, seconds=time.time() - t1, encode_s=t_enc, per_source={"/".join(k): v for k, v in taken.items()})
+    report = dict(images=images, bad=bad, seconds=time.time() - t1, encode_s=t_enc, per_source=dict(got))  # images encoded; a failed or unfinished one still used up its place under the cap
     for l in range(4):
         v = [len(r["seq"]) for r in res if r["label"] == l and not r["flip"]]
         w = [len(r["seq"]) for r in res if r["label"] == l and not r["flip"] and r["source"] != "curated"]
