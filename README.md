@@ -86,7 +86,7 @@ The same as a script:
 uv run python assets/examples/quickstart.py assets/examples/simple/mondrian_piet.jpg decoded.png
 ```
 
-The main options of `Tokenizer(...)`: `learned=None` turns off the refiner, `drext=None` uses the original DReX, `gap` widens (above 1) or narrows the spread between simple and busy images, `floor` sets the PSNR floor (0 turns it off), `tile=0` scores the whole image only, `warp_max=0` turns off the warp, and `vae` picks `flux2` (default), `flux` or `qwen`. Images are centre-cropped to a square; 768 is the size everything was fit and measured at, and other multiples of 256 work.
+The main options of `Tokenizer(...)`: `learned=None` turns off the refiner, `drext=None` uses the original DReX, `gap` widens (above 1) or narrows the spread between simple and busy images, `floor` sets the PSNR floor (0 turns it off), `tile=0` scores the whole image only, `warp_max=0` turns off the warp, and `vae` picks `flux2` (default), `flux` or `qwen`. Images are centre-cropped to a square. Any side that is a multiple of 256 works; DReX and texture energy are always measured on a 768 px copy, the size the budget curve was fit at, but the token count is not yet scaled for size, so 768 is still the calibrated size. `tools/fit_size_scaling.py` measures the scaling on a GPU; `tools/size_scaling.md` says how to run it.
 
 ## Evaluate
 
@@ -150,4 +150,5 @@ retina/      the tokenizer package: tokenizer.py, warp.py, drex.py, refiner.py, 
 mar/         the MAR model, data, encoding, training and sampling
 tests/       CPU checks, end to end, options, MAR, evaluate.py, readme_check.py
 assets/      figures, and examples/: quickstart.py and four public-domain paintings
+tools/       the size-scaling fit for the budget (GPU) and its run notes
 ```

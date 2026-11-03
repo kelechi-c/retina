@@ -5,5 +5,9 @@ __pycache__/
 *_out/
 mar_toy/
 decoded.png
-tools/
+# local tools stay out of git; these are shared
+tools/*
+!tools/fit_size_scaling.py
+!tools/size_scaling.md
+!tools/size_scaling_results/
 docs/
