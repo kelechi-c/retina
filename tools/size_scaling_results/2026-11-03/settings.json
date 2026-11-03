@@ -1,0 +1,17 @@
+{
+ "sizes": [
+  512,
+  768,
+  1024
+ ],
+ "metrics": [
+  "lpips",
+  "psnr"
+ ],
+ "ratio": 1.2,
+ "vae": "flux2",
+ "drext": "default",
+ "images": "/runs/size_images2",
+ "procedural": 40,
+ "wikiart": 0
+}
