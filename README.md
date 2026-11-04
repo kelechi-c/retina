@@ -150,5 +150,5 @@ retina/      the tokenizer package: tokenizer.py, warp.py, drex.py, refiner.py, 
 mar/         the MAR model, data, encoding, training and sampling
 tests/       CPU checks, end to end, options, MAR, evaluate.py, readme_check.py
 assets/      figures, and examples/: quickstart.py and four public-domain paintings
-tools/       the size-scaling fit for the budget (GPU) and its run notes
+tools/       GPU tools with run notes: the size-scaling fit for the budget, and the floor test
 ```

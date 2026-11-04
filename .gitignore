@@ -10,4 +10,7 @@ tools/*
 !tools/fit_size_scaling.py
 !tools/size_scaling.md
 !tools/size_scaling_results/
+!tools/test_floor.py
+!tools/floor_test.md
+!tools/floor_results/
 docs/
