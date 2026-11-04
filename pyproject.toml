@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Tokenizer(judges=...) and the old screens only
+# DreamSim scores in tools/test_floor.py (--dreamsim)
 judges = ["dreamsim"]
 
 [build-system]

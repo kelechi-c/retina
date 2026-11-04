@@ -256,7 +256,7 @@ def fit(out, sizes):
 
 
 def report(out, res, per_image, recs):
-    L = [f"# Size scaling of the token budget\n", f"{res['n_images']} images ({res['n_train']} training, {res['n_images'] - res['n_train']} held out), sides {', '.join(map(str, res['sizes']))}. Model: `{res['model']}`.\n"]
+    L = ["# Size scaling of the token budget\n", f"{res['n_images']} images ({res['n_train']} training, {res['n_images'] - res['n_train']} held out), sides {', '.join(map(str, res['sizes']))}. Model: `{res['model']}`.\n"]
     # step 1 check: the budget's inputs at each side against 768
     L.append("## Budget inputs read at each side (should match 768)\n\n| side | median abs change in d | median abs change in texture |\n|---|---|---|")
     for S in res["sizes"]:

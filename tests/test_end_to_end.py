@@ -24,7 +24,7 @@ def main(out, mar):
     dev = "cuda"
     tok = Tokenizer()
     assert tok.net is not None, "the S1 refiner must load by default"
-    assert tok.v.__class__.__name__ == "Flux2VAE"
+    assert tok.v.__class__.__name__ == "Flux2"
     fails, n = [], {}
     for f in sorted((ROOT / "assets" / "examples").glob("*/*.jpg")):
         x = load_img(str(f), 768).to(dev)

@@ -23,10 +23,6 @@ def _spread(e, width):
     return F.conv1d(m[None, None], k.view(1, 1, -1) / k.sum(), padding=width)[0, 0]
 
 
-def density_at(e, t, width=4, rmin=.04):
-    return (_spread(e, width) / t).clamp(rmin, 1)
-
-
 def density(e, n, width=4, rmin=.04):
     """Water-filling: rho in [rmin, 1], rising with importance, integrating to n."""
     m = _spread(e, width)

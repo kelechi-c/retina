@@ -11,7 +11,7 @@ import tarfile
 
 import numpy as np
 import pyarrow.parquet as pq
-from huggingface_hub import HfFileSystem, hf_hub_download
+from huggingface_hub import hf_hub_download
 from PIL import Image, ImageDraw
 
 Image.MAX_IMAGE_PIXELS = None
@@ -78,22 +78,6 @@ def procedural(seed, side=512):
         im = im.rotate(r.uniform(-45, 45), Image.BICUBIC)
     u = S // 2
     return im.crop((u, u, u + S, u + S)).resize((side, side), Image.LANCZOS)
-
-
-def wikiart_counts():
-    """Bucket counts from the label columns alone, without downloading images."""
-    fs = HfFileSystem()
-    files = sorted(fs.glob("datasets/huggan/wikiart/data/*.parquet"))
-    S, G = STYLES, GENRES
-    n, styles = [0, 0, 0, 0], {}
-    for f in files:
-        t = pq.read_table(fs.open(f), columns=["style", "genre"])
-        for s, g in zip(t["style"].to_pylist(), t["genre"].to_pylist()):
-            styles[S[s]] = styles.get(S[s], 0) + 1
-            l = wikiart_label(S[s], G[g])
-            if l is not None:
-                n[l] += 1
-    return n, styles, S, G
 
 
 def wikiart(S, G, shards, p, salt=""):

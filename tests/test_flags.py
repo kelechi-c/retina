@@ -15,18 +15,16 @@ SETTINGS = {
     "default": {},
     "no S1 refiner": dict(learned=None),
     "original DReX": dict(drext=None),
-    "earlier curve": dict(refit=False),
     "gap 1.5": dict(gap=1.5),
     "gap 1.0": dict(gap=1.),
     "no PSNR floor": dict(floor=0.),
     "whole-image DReX": dict(tile=0),
     "no warp": dict(warp_max=0),
-    "scale .5": dict(scale=.5),
 }
 
 
 @click.command()
-@click.option("--vaes", default="flux2", show_default=True, help="comma list of flux2, flux, qwen, taeqi")
+@click.option("--vaes", default="flux2", show_default=True, help="comma list of flux2, flux, qwen")
 def main(vaes):
     dev, fails = "cuda", []
     imgs = {k: load_img(str(next((ROOT / "assets" / "examples").glob(f"*/{k}.jpg"))), 768).to(dev) for k in ("mondrian_b144", "veronese")}
@@ -53,7 +51,6 @@ def main(vaes):
         checks = {
             "no warp keeps the Mondrian unwarped and costs at least as much": g("no warp", "mondrian_b144") >= g("default", "mondrian_b144") - 2,
             "gap 1.5 widens the gap over gap 1.0": g("gap 1.5", "veronese") / g("gap 1.5", "mondrian_b144") >= g("gap 1.0", "veronese") / g("gap 1.0", "mondrian_b144"),
-            "scale .5 never costs more": g("scale .5", "mondrian_b144") <= g("default", "mondrian_b144"),
             "no S1 adds no statistics tokens": g("no S1 refiner", "mondrian_b144") <= g("default", "mondrian_b144"),
         }
         for c, ok in checks.items():

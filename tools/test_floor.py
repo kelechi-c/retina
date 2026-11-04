@@ -10,7 +10,6 @@ usage: uv run python tools/test_floor.py OUT --images DIR [--ocr] [--dreamsim] [
 """
 import collections
 import json
-import math
 import pathlib
 import sys
 import time
