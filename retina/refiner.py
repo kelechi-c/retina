@@ -1,8 +1,7 @@
-"""A small residual net that sits after the tiny decoder and the unwarp. It sees the canvas, how much each pixel was stretched on each axis, and noise, so it can restore texture where stretching removed it and leave native areas alone. Last layer starts at zero: step 0 is the plain codec."""
+"""S1, the refiner: a small residual net after the VAE decoder and the unwarp. It sees the decode, how much each pixel was stretched on each axis, one statistics token per 256 tile and noise, so it can restore texture where shrinking removed it and leave native areas alone. Its output layer and its statistics layer start at zero, so step 0 is the plain decode."""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.utils.parametrizations as P
 
 
 class Res(nn.Module):
@@ -14,8 +13,8 @@ class Res(nn.Module):
         return x + self.b(F.silu(self.a(F.silu(x))))
 
 
-class Refiner(nn.Module):
-    def __init__(self, f=48, mid=8):
+class StatRefiner(nn.Module):
+    def __init__(self, f=48, mid=8, stats=27):
         super().__init__()
         self.head = nn.Conv2d(6, f, 3, padding=1)
         self.down = nn.Conv2d(f, 2 * f, 3, 2, 1)
@@ -24,40 +23,13 @@ class Refiner(nn.Module):
         self.fuse = nn.Conv2d(2 * f, f, 1)
         self.tail = nn.Sequential(Res(f), Res(f), Res(f))
         self.out = nn.Conv2d(f, 3, 3, padding=1)
-        nn.init.zeros_(self.out.weight)
-        nn.init.zeros_(self.out.bias)
-
-    def forward(self, c, stretch, noise=None):
-        """c [B,3,H,W] in [-1,1]; stretch [B,2,H,W] = log2(source px per coded px) / 4."""
-        if noise is None:
-            noise = torch.randn_like(c[:, :1])
-        h = self.head(torch.cat((c, stretch, noise), 1))
-        m = self.up(self.mid(self.down(h)))
-        return c + self.out(self.tail(self.fuse(torch.cat((h, m), 1))))
-
-
-class Disc(nn.Module):
-    """Patch discriminator."""
-
-    def __init__(self, f=48):
-        super().__init__()
-        sn = P.spectral_norm
-        self.n = nn.Sequential(sn(nn.Conv2d(3, f, 4, 2, 1)), nn.LeakyReLU(.2, True), sn(nn.Conv2d(f, 2 * f, 4, 2, 1)), nn.LeakyReLU(.2, True), sn(nn.Conv2d(2 * f, 4 * f, 4, 2, 1)), nn.LeakyReLU(.2, True), sn(nn.Conv2d(4 * f, 1, 3, 1, 1)))
-
-    def forward(self, x):
-        return self.n(x)
-
-
-class StatRefiner(Refiner):
-    """Refiner that also reads one statistics token per tile, broadcast over that tile. Starts at zero, like the output layer, so step 0 ignores the token."""
-
-    def __init__(self, f=48, mid=8, stats=27):
-        super().__init__(f, mid)
         self.stat = nn.Conv2d(stats, f, 1)
-        nn.init.zeros_(self.stat.weight)
-        nn.init.zeros_(self.stat.bias)
+        for m in (self.out, self.stat):
+            nn.init.zeros_(m.weight)
+            nn.init.zeros_(m.bias)
 
     def forward(self, c, stretch, stats, noise=None):
+        """c [B,3,H,W] in [-1,1]; stretch [B,2,H,W] = log2(source px per coded px) / 4; stats [B,27,H,W], each tile's token spread over the tile."""
         if noise is None:
             noise = torch.randn_like(c[:, :1])
         h = self.head(torch.cat((c, stretch, noise), 1)) + self.stat(stats)
