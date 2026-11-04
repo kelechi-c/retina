@@ -1,23 +1,12 @@
 # retina
 
-An image tokenizer whose token count follows the image's content. A Mondrian costs about 70 tokens, a Where's Waldo page costs 1,764, and no image costs more than the plain VAE grid of 2,304 at 768 px. Tokens are ordinary FLUX.2 latents, 128 floats each, in one sequence an autoregressive model can read. A small MAR model trained on these tokens is included.
+A **content-adaptive image tokenizer** [scaffold] which outputs variable length tokens depending on the images visual/perceptual complexity. Retina tokens are vanilla FLUX.2 latents [n, 128] floats each, in one sequence an AR transformer can read/model. A small [MAR](https://arxiv.org/pdf/2406.11838) model trained on these tokens is included as a testing and PoC piece.
+
+A Mondrian costs about 70 tokens, a Where's Waldo page costs 1,764, Veronese's _Wedding of Cana_ costs 2,025 tokens, and a document page is maxxed out at 2,304 tokens. At 768 px, no image costs more than the plain VAE full-grid ceiling of 2,304.
 
 ![Default FLUX.2 tokens and retina tokens](assets/compare.jpg)
 
 ## Results at 768 px
-
-| Group | Images | Median tokens | Grid / median |
-|---|---|---|---|
-| Clean synthetic shapes | 8 | 44 | 52x |
-| Rotated Mondrian | 26 | 60 | 38x |
-| Mondrian | 13 | 75 | 31x |
-| Simple images | 8 | 172 | 13x |
-| Unseen eval images | 70 | 333 | 6.9x |
-| Texture | 13 | 841 | 2.7x |
-| Waldo-like scenes | 3 | 841 | 2.7x |
-| Ornate | 6 | 930 | 2.5x |
-| Dense paintings | 9 | 1,521 | 1.5x |
-| Document pages | 63 | 2,304 | 1x |
 
 The median Mondrian costs 75 tokens and the Waldo book page 1,764: a **23.5x** gap (95% bootstrap interval 19.2-29.4x over 13 Mondrians), and 10 of 13 Mondrians are more than 16x cheaper than the page. These counts include the warp and statistics tokens as stored; packed into 128-float tokens the median Mondrian is 67. Encoding takes .23 s and decoding .09 s on one L4.
 
@@ -30,9 +19,10 @@ How close is it to the full grid? Our decode against the plain FLUX.2 decode wit
 | Mondrian | .930 / .909 | .156 / .226 | 33.7 / 26.2 |
 | Unseen eval | .965 / .943 | .140 / .215 | 26.1 / 22.4 |
 | Dense paintings | .993 / .988 | .063 / .143 | 31.0 / 28.3 |
-| All 259 images | .972 / .912 | .102 / .223 | 30.4 / 23.4 |
+| Full eval set (~260 samples) | .972 / .912 | .102 / .223 | 30.4 / 23.4 |
 
-Busy images keep most of their tokens and are close to the grid by every measure. Cheap images keep lines and colour and lose canvas weave and cracks, which LPIPS sees. The full grid itself is near the original (LPIPS .007), so almost all of the gap is the tokens we drop.
+
+Visually dense/complex images keep most of their tokens and are close to the grid ceiling, while simple images keep lines and colour and lose canvas weave and cracks. The full grid itself is almost identical to the original (LPIPS .007), so almost all of the gap is the tokens we drop.
 
 ## How it works
 
@@ -53,30 +43,26 @@ A busy image goes through the same steps and simply keeps most of its grid:
 
 ## Install
 
-Needs a CUDA GPU (an L4 is enough) and [uv](https://docs.astral.sh/uv/).
+Needs a CUDA GPU and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/kelechi-c/retina && cd retina
 uv sync
 ```
 
-The evaluation script uses DINOv3, which is gated: request access on [its model page](https://huggingface.co/facebook/dinov3-vitb16-pretrain-lvd1689m), then log in.
+The evaluation script uses DINOv3, which is gated: request access on [its model page](https://huggingface.co/facebook/dinov3-vitb16-pretrain-lvd1689m) (and authenticate with hf...but that's for evaluation on your own end).
 
-```bash
-uv run hf auth login
-```
-
-Weights download on first use: the FLUX.2-dev VAE from Black Forest Labs, DReX from its GitHub release, the tuned DReX head, and the refiner and MAR weights from [tensorkelechi/retina-tokenizer](https://huggingface.co/tensorkelechi/retina-tokenizer). FLUX.2-dev and DINOv3 come with their own licences.
+Weights are downloaded on first use: the FLUX.2-dev VAE from Black Forest Labs, DReX from its GitHub release, the tuned DReX head, and the refiner and MAR weights from [tensorkelechi/retina-tokenizer](https://huggingface.co/tensorkelechi/retina-tokenizer). FLUX.2-dev and DINOv3 come with their own licences.
 
 ## Use
 
 ```python
 from retina import Tokenizer, load_img, save_png
 
-tok = Tokenizer()                          # the defaults above
+tok = Tokenizer()
 x = load_img("assets/examples/simple/mondrian_piet.jpg", 768).cuda()
 t = tok.encode(x)
-seq = Tokenizer.pack(t)["seq"]             # [N, 128]; N = 39 here, 2,304 for the plain grid
+seq = Tokenizer.pack(t)["seq"]  # [N, 128]; N = 39 here; 2,304 -> full grid
 save_png(tok.decode(t), "decoded.png")
 ```
 
@@ -86,7 +72,9 @@ The same as a script:
 uv run python assets/examples/quickstart.py assets/examples/simple/mondrian_piet.jpg decoded.png
 ```
 
-The main options of `Tokenizer(...)`: `learned=None` turns off the refiner, `drext=None` uses the original DReX, `gap` widens (above 1) or narrows the spread between simple and busy images, `floor` sets the PSNR floor (0 turns it off), `tile=0` scores the whole image only, `warp_max=0` turns off the warp, and `vae` picks `flux2` (default), `flux` or `qwen`. Images are centre-cropped to a square. Any side that is a multiple of 256 works; DReX and texture energy are always measured on a 768 px copy, the size the budget curve was fit at, but the token count is not yet scaled for size, so 768 is still the calibrated size. `tools/fit_size_scaling.py` measures the scaling on a GPU; `tools/size_scaling.md` says how to run it.
+The main options of `Tokenizer(...)`: `learned=None` turns off the refiner, `drext=None` uses the original DReX, `gap` widens (above 1) or narrows the spread between simple and busy images, `floor` sets the PSNR floor (0 turns it off), `tile=0` scores the whole image only, `warp_max=0` turns off the warp, and `vae` picks `flux2` (default), `flux` or `qwen`. Images are centre-cropped to a square.
+ 
+Any image side/resolution that is a multiple of 256 works; DReX and texture energy are always measured on a 768 px copy, the size the budget curve was fit at, but the token count is not yet scaled for size, so 768 is still the default calibrated size.
 
 ## Evaluate
 
@@ -134,21 +122,3 @@ bash tests/test_mar.sh
 ```
 
 The first needs no GPU and no weights: it checks that packing round-trips and matches the MAR's token layout at 256 to 1024 px, and that the warp is sane. The second checks the defaults, an exact pack round trip, that the Mondrians cost under an eighth of the busy paintings, and one MAR sample per label. The third runs each main option on a simple and a busy image. The fourth is the toy MAR run above plus sampling from the released weights.
-
-## Compute
-
-| | Compute |
-|---|---|
-| Tokenizer: budget fit, DReX text tune, S1 refiner | about 7 Colab units on an L4 and $1 of Modal A10G |
-| Released MAR: encoding and 100,000 steps | about 30 Colab units (4.4 A100 hours) and $3.50 of Modal A10G |
-| All search since the elastic grid, those included | about 45 Colab units and $23 of Modal |
-
-## Layout
-
-```
-retina/      the tokenizer package: tokenizer.py, warp.py, drex.py, refiner.py, vae.py
-mar/         the MAR model, data, encoding, training and sampling
-tests/       CPU checks, end to end, options, MAR, evaluate.py, readme_check.py
-assets/      figures, and examples/: quickstart.py and four public-domain paintings
-tools/       the size-scaling fit for the budget (GPU) and its run notes
-```
