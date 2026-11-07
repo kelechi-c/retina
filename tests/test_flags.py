@@ -15,7 +15,7 @@ SETTINGS = {
     "default": {},
     "policy v16": dict(policy="v16"),
     "policy v1": dict(policy="v1"),
-    "no S1 refiner": dict(learned=None),
+    "no S1 refiner": dict(learned=None, policy="v1"),
     "original DReX": dict(drext=None),
     "gap 1.5": dict(gap=1.5, policy="v1"),
     "gap 1.0": dict(gap=1., policy="v1"),
@@ -53,7 +53,7 @@ def main(vaes):
         checks = {
             "no warp keeps the Mondrian unwarped and costs at least as much": g("no warp", "mondrian_b144") >= g("policy v1", "mondrian_b144") - 2,
             "gap 1.5 widens the gap over gap 1.0": g("gap 1.5", "veronese") / g("gap 1.5", "mondrian_b144") >= g("gap 1.0", "veronese") / g("gap 1.0", "mondrian_b144"),
-            "no S1 adds no statistics tokens": g("no S1 refiner", "mondrian_b144") <= g("default", "mondrian_b144"),
+            "no S1 adds no statistics tokens": g("no S1 refiner", "mondrian_b144") <= g("policy v1", "mondrian_b144"),
         }
         for c, ok in checks.items():
             print(("PASS " if ok else "FAIL ") + c, flush=True)
