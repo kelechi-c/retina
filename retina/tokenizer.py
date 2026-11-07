@@ -1,6 +1,7 @@
 """The tokenizer as one object. Image -> variable-length tokens -> image.
 
-Encode: DReX and texture energy give the image a budget. Below WARP_MAX tokens the image is folded so edges keep their resolution, then the frozen VAE encodes it. One decode is checked against a PSNR floor, and the grid grows until it passes. Images at LEARNED_MAX tokens or fewer also get statistics for the S1 refiner. Decode needs only the tokens.
+Encode (policy "v18", the default): about twenty content features from DReX, texture and gradient statistics give the image a budget through a fit on the user's own accept/reject labels. At every size the image is encoded both folded (so edges keep their resolution) and plain, and the better decode is kept. A learned check, fitted on the user's blind ratings, accepts that decode or steps up one size; when the content is concentrated, each busy region must pass on its own, so a small dense island is not averaged away. Images at LEARNED_MAX tokens or fewer also get statistics for the S1 refiner. Decode needs only the tokens.
+Policy "v16" keeps v1's budget with fold-if-better at every size, a PSNR floor capped below the grid's own PSNR and a per-tile LPIPS floor; policy "v1" is the released tokenizer.
 One token is 128 floats on FLUX.2, the default. `pack` puts knots, statistics and latents into one sequence of equal tokens for an AR model."""
 import math
 import os
@@ -28,6 +29,11 @@ BUDGET_SIDE = 768
 WARP_MAX = 200
 # How much each side grows when a decode misses the floor.
 GROW = 1.4
+# v1.6: grow 1.2x per side, never ask for more PSNR than the grid gives minus this, and no 256 px tile more than this much LPIPS worse than the grid.
+V16_GROW, V16_MARGIN, V16_TAU = 1.2, 1.5, .35
+# v1.8: the grid sides (tokens per side) the budget snaps to and the check steps through.
+V18_SIDES = [4, 6, 8, 10, 12, 15, 18, 21, 24, 27, 30, 34, 38, 43, 48]
+POLICIES = ("v18", "v16", "v1")
 # The user adopted this over the original DReX, 2026-11-01: on real documents it reads close to the full grid where the original does not.
 DREXT = "tensorkelechi/DReX-text-tuned"
 # Default weights: S1 for FLUX.2, and the small MAR in mar.py.
@@ -36,10 +42,20 @@ S1_FLUX2 = "s1_flux2.pt"
 
 
 class Tokenizer:
-    def __init__(self, vae="flux2", dev="cuda", learned=S1_FLUX2, gap=1.25, floor=22., drext=DREXT, tile=1, warp_max=WARP_MAX):
-        """vae: flux2, flux or qwen. learned: S1 refiner weights for this VAE, a file, or the published name for FLUX.2; None decodes plain. gap above 1 widens the spread between simple and busy images. floor: PSNR in dB the first decode must reach before the grid stops growing; 0 turns it off. drext: tuned DReX weights, a file or a Hugging Face repo; None keeps the original. tile k: DReX can rise to the kth highest of the 9 tile scores, so one dense region counts; 0 is whole-image only. warp_max: warp below this many tokens."""
+    def __init__(self, vae="flux2", dev="cuda", learned=S1_FLUX2, gap=1.25, floor=22., drext=DREXT, tile=1, warp_max=WARP_MAX, policy="v18"):
+        """policy: v18 (learned budget and check, fold-if-better at every size), v16 (v1's budget, fold-if-better at every size, capped PSNR floor and tile floor) or v1 (the released tokenizer; floor and warp_max apply only to it). vae: flux2, flux or qwen. learned: S1 refiner weights for this VAE, a file, or the published name for FLUX.2; None decodes plain. gap above 1 widens the spread between simple and busy images. floor: PSNR in dB the first decode must reach before the grid stops growing; 0 turns it off. drext: tuned DReX weights, a file or a Hugging Face repo; None keeps the original. tile k: DReX can rise to the kth highest of the 9 tile scores, so one dense region counts; 0 is whole-image only. warp_max: warp below this many tokens."""
         self.dev, self.v = dev, VAES[vae](dev)
         self.gap, self.floor, self.tile, self.warp_max = gap, floor, tile, warp_max
+        if policy not in POLICIES:
+            raise ValueError(f"policy must be one of {POLICIES}, got {policy}")
+        self.policy = policy
+        if policy == "v18":
+            from .check import Checker
+            self.checker = Checker(dev)
+            self.lp = self.checker.lp  # v1.6's tile floor, for sides other than 768
+        if policy == "v16":
+            import lpips
+            self.lp = lpips.LPIPS(net="alex", spatial=True, verbose=False).to(dev).eval().requires_grad_(False)
         self.drex = load_drex(dev)
         if drext:
             # Fusion and head tuned so text scores for the tokens it needs; other images stay near the original score.
@@ -68,15 +84,20 @@ class Tokenizer:
         x = self._check(x)
         if x.shape[-1] != BUDGET_SIDE:
             x = C.down(x, BUDGET_SIDE).clamp(-1, 1)
+        b, d, tex, _, _ = self._budget(x)
+        return b, d, tex
+
+    def _budget(self, x):
+        """x at BUDGET_SIDE -> (budget, DReX as the budget reads it, texture energy, whole-image DReX, the tile scores)"""
         S = x.shape[-1]
         tiles = torch.cat([x[..., i : i + T, j : j + T] for i in range(0, S, T) for j in range(0, S, T)])
         tex = (tiles - X.structure(tiles)).abs().mean().item()
-        d = drex_score(self.drex, x)[0]
-        if self.tile:
-            d = max(d, sorted(drex_score(self.drex, tiles))[-min(self.tile, len(tiles))])
+        dw = float(drex_score(self.drex, x)[0])
+        dt = [float(v) for v in drex_score(self.drex, tiles)] if self.tile or self.policy == "v18" else []
+        d = max(dw, sorted(dt)[-min(self.tile, len(dt))]) if self.tile else dw
         t = 10 * tex
         b = sum(w * v for w, v in zip(REFIT, (1, d, t, d * d, t * t, d * t)))
-        return math.exp(PIVOT + self.gap * (b - PIVOT)), d, tex
+        return math.exp(PIVOT + self.gap * (b - PIVOT)), d, tex, dw, dt
 
     def size_of(self, b, S):
         """Budget -> cells per side, a whole number of tokens per side."""
@@ -102,6 +123,10 @@ class Tokenizer:
         given = n is not None
         if given and (n % step or not step <= n <= top):
             raise ValueError(f"n must be a multiple of {step} from {step} to {top} at side {S}, got {n}")
+        if not given and self.policy == "v18" and S == BUDGET_SIDE:
+            return self._encode_v18(x)
+        if not given and self.policy in ("v16", "v18"):  # v1.8's check is laid out for 768 px; other sides use v1.6
+            return self._encode_v16(x)
         b, d, tex = self.budget(x)
         n = n or self.size_of(b, S)
         while True:
@@ -116,6 +141,63 @@ class Tokenizer:
             s = self._stats(x, c).float()
             if s[:, :24].mean().item() >= 0:
                 t["stats"] = s
+        return t
+
+    @staticmethod
+    def _psnr(a, b):
+        return (-10 * ((a - b) / 2).pow(2).mean().log10()).item()
+
+    @torch.no_grad()
+    def _best(self, x, n):
+        """Encode at n cells per side, folded and plain, keep the decode with the higher PSNR, add S1 statistics where encode would.
+        -> (tokens, final decode, PSNR of the plain decode)"""
+        S, top, best = x.shape[-1], x.shape[-1] // self.v.cell, None
+        for w in ((True, False) if n < top else (False,)):
+            t = self._pack(*self._code(x, n, w), n, S)
+            c = self.decode(t)
+            p = self._psnr(c, x)
+            if best is None or p > best[0]:
+                best = (p, t, c)
+        p, t, c = best
+        if self.net is not None and self.length(t) + (S // T) ** 2 <= LEARNED_MAX:
+            s = self._stats(x, c).float()
+            if s[:, :24].mean().item() >= 0:
+                t["stats"] = s
+                c = self.decode(t)
+        return t, c, p
+
+    @torch.no_grad()
+    def _encode_v18(self, x):
+        """One-pass learned budget, then one decode per size until the learned check accepts it."""
+        from . import check as K
+        b, d, tex, dw, dt = self._budget(x)
+        f, ct = K.content(x, dw, dt, tex, b)
+        pred = K.budget(f)
+        k = min(range(len(V18_SIDES)), key=lambda i: abs(math.log(V18_SIDES[i] ** 2 / pred)))
+        while True:
+            t, c, _ = self._best(x, V18_SIDES[k] * self.v.pack)
+            p = self.checker(x, c, ct, self.length(t))
+            if p > self.checker.q or k == len(V18_SIDES) - 1:
+                break
+            k += 1
+        t.update(budget=pred, drex=d, tex=tex, accept=p)
+        return t
+
+    @torch.no_grad()
+    def _encode_v16(self, x):
+        """v1's budget; grow until the plain decode reaches the floor (capped at the grid's own PSNR minus V16_MARGIN) and no 256 px tile of the final decode is more than V16_TAU LPIPS worse than the grid's."""
+        S, step, top = x.shape[-1], self.v.pack, x.shape[-1] // self.v.cell
+        b, d, tex = self.budget(x)
+        g = self.v.dec(self.v.enc(x)).float().clamp(-1, 1)
+        tl = lambda c: [self.lp(x[..., i : i + T, j : j + T], c[..., i : i + T, j : j + T]).mean().item() for i in range(0, S, T) for j in range(0, S, T)]
+        ref, fl = tl(g), min(self.floor, self._psnr(g, x) - V16_MARGIN)
+        n = self.size_of(b, S)
+        while True:
+            t, c, p = self._best(x, n)
+            if (p >= fl and max(a - r for a, r in zip(tl(c), ref)) <= V16_TAU) or n >= top:
+                break
+            n = min(max(int(n * V16_GROW / step + .5) * step, n + step), top)
+        t.update(budget=b, drex=d, tex=tex)
         return t
 
     def _stats(self, x, c):
